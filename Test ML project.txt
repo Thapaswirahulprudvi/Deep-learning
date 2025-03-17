@@ -1,0 +1,73 @@
+import librosa
+import librosa.display
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from tensorflow.image import resize
+from google.colab import files
+
+# Load the trained model
+model = tf.keras.models.load_model("Trained1_model.h5")
+
+# Define the classes (music genres)
+classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
+
+# Function to preprocess a single audio file and show spectrograms
+def preprocess_audio(file_path, target_shape=(210, 210)):
+    y, sr = librosa.load(file_path, sr=None, duration=30)  # Load audio (30 seconds max)
+
+    # Plot original spectrogram
+    plt.figure(figsize=(10, 4))
+    spectrogram = librosa.feature.melspectrogram(y=y, sr=sr)
+    spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)
+    librosa.display.specshow(spectrogram_db, sr=sr, x_axis='time', y_axis='mel')
+    plt.colorbar(format='%1.0f dB')
+    plt.title("Original Spectrogram")
+    plt.show()
+
+    # Convert to Mel spectrogram
+    mel_spectrogram = librosa.feature.melspectrogram(y=y, sr=sr)
+    mel_spectrogram = librosa.power_to_db(mel_spectrogram, ref=np.max)
+
+    # Standardization
+    mel_spectrogram = (mel_spectrogram - np.mean(mel_spectrogram)) / np.std(mel_spectrogram)
+
+    # Resize to match model input shape
+    mel_spectrogram = resize(np.expand_dims(mel_spectrogram, axis=-1), target_shape)
+
+    # Plot processed spectrogram
+    plt.figure(figsize=(10, 4))
+    librosa.display.specshow(mel_spectrogram.numpy()[:, :, 0], sr=sr, x_axis='time', y_axis='mel')
+    plt.colorbar(format='%1.0f dB')
+    plt.title("Processed Spectrogram (Resized & Standardized)")
+    plt.show()
+
+    return np.expand_dims(mel_spectrogram, axis=0)  # Add batch dimension
+
+# Upload an audio file manually in Colab
+uploaded = files.upload()  # Select and upload your .wav file
+
+# Get the filename of the uploaded file
+file_path = list(uploaded.keys())[0]
+
+# Preprocess the audio file
+processed_audio = preprocess_audio(file_path)
+
+# Make prediction
+predictions = model.predict(processed_audio)
+
+# Get the predicted class
+predicted_label = np.argmax(predictions)
+predicted_genre = classes[predicted_label]
+
+# Print the predicted genre
+print(f"Predicted Genre: {predicted_genre}")
+
+# Show model confidence for all genres
+plt.figure(figsize=(12, 5))
+plt.bar(classes, predictions[0], color='teal')
+plt.xlabel("Music Genre")
+plt.ylabel("Prediction Confidence")
+plt.title("Model Confidence per Genre")
+plt.xticks(rotation=45)
+plt.show()
