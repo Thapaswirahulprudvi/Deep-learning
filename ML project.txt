@@ -1,0 +1,167 @@
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import librosa
+import librosa.display
+import os
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dense, Flatten, Dropout, BatchNormalization, GlobalAveragePooling2D
+from tensorflow.keras.regularizers import l2
+from tensorflow.image import resize
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+
+# Define the classes (music genres)
+classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
+
+# Function to load audio and apply transformations (noise, stretch, shift)
+def add_noise(y, noise_level=0.005):
+    return y + noise_level * np.random.randn(len(y))
+
+def time_stretch(y, rate=1.1):
+    return librosa.effects.time_stretch(y, rate)
+
+def time_shift(y, sr, shift_max=2):
+    shift = int(np.random.uniform(-shift_max * sr, shift_max * sr))
+    return np.roll(y, shift)
+
+# Function to plot Mel spectrogram
+def plot_melspectrogram(y, sr):
+    spectrogram = librosa.feature.melspectrogram(y=y, sr=sr)
+    spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)
+    plt.figure(figsize=(10,4))
+    librosa.display.specshow(spectrogram_db, sr=sr, x_axis='time', y_axis='mel')
+    plt.colorbar(format='%1.0f dB')
+    plt.title("Spectrogram")
+    plt.show()
+
+# Function to create Mel spectrogram chunks
+def melspectrogram_chunks(y, sr):
+    chunk_duration = 4
+    overlap_duration = 2
+    chunk_samples = chunk_duration * sr
+    overlap_samples = overlap_duration * sr
+    num_chunks = int(np.ceil((len(y) - chunk_samples) / (chunk_samples - overlap_samples))) + 1
+    for i in range(num_chunks):
+        start = i * (chunk_samples - overlap_samples)
+        end = start + chunk_samples
+        chunk = y[start:end]
+        spectrogram = librosa.feature.melspectrogram(y=chunk, sr=sr)
+        spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)
+        plt.figure(figsize=(4,2))
+        librosa.display.specshow(spectrogram_db, sr=sr, x_axis='time', y_axis='mel')
+        plt.colorbar(format='%1.0f dB')
+        plt.title("Spectrogram")
+        plt.show()
+
+# Function to preprocess the data
+def data_pre_processing(directory_path, classes, target_shape=(210, 210)):
+    data = []
+    labels = []
+    for index, label in enumerate(classes):
+        folder_path = os.path.join(directory_path, label)
+        print("Working with", label)
+        for file_name in os.listdir(folder_path):
+            if file_name.endswith('.wav'):
+                file_path = os.path.join(folder_path, file_name)
+                try:
+                    y, sr = librosa.load(file_path, sr=None, duration=30)  # limit duration to avoid memory issues
+                    chunk_duration = 4
+                    overlap_duration = 2
+                    chunk_samples = chunk_duration * sr
+                    overlap_samples = overlap_duration * sr
+                    num_chunks = int(np.ceil((len(y) - chunk_samples) / (chunk_samples - overlap_samples))) + 1
+                    for i in range(num_chunks):
+                        start = i * (chunk_samples - overlap_samples)
+                        end = start + chunk_samples
+                        if end > len(y):
+                            chunk = np.pad(y[start:], (0, end - len(y)))
+                        else:
+                            chunk = y[start:end]
+                        mel_spectrogram = librosa.feature.melspectrogram(y=chunk, sr=sr)
+                        mel_spectrogram = librosa.power_to_db(librosa.feature.melspectrogram(y=chunk, sr=sr), ref=np.max)
+                        mel_spectrogram = (mel_spectrogram - np.mean(mel_spectrogram)) / np.std(mel_spectrogram)  # Standardization
+                        mel_spectrogram = resize(np.expand_dims(mel_spectrogram, axis=-1), target_shape)
+                        data.append(mel_spectrogram)
+                        labels.append(index)
+                except Exception as e:
+                    print(f"Error processing {file_name}: {str(e)}")
+                    continue
+    return np.array(data), np.array(labels)
+
+# Directory path to the dataset
+directory_path = "/content/drive/MyDrive/colab ML/modified ML data set/genres_original"
+
+# Load and preprocess the data
+data, label = data_pre_processing(directory_path, classes, target_shape=(210, 210))
+
+# One-hot encoding of labels
+label = to_categorical(label, num_classes=len(classes))
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(data, label, test_size=0.2, random_state=42)
+
+# Build the CNN model
+model = Sequential()
+model.add(Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=X_train[0].shape, kernel_regularizer=l2(0.0001)))
+model.add(BatchNormalization())
+model.add(Conv2D(32, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.0001)))
+model.add(BatchNormalization())
+model.add(MaxPooling2D(pool_size=(3, 3)))
+model.add(Dropout(0.4))
+
+model.add(Conv2D(64, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.0005)))
+model.add(BatchNormalization())
+model.add(Conv2D(64, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.0005)))
+model.add(BatchNormalization())
+model.add(MaxPooling2D(pool_size=(3, 3)))
+model.add(Dropout(0.4))
+
+model.add(Conv2D(128, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.001)))
+model.add(BatchNormalization())
+model.add(Conv2D(128, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.001)))
+model.add(BatchNormalization())
+model.add(MaxPooling2D(pool_size=(3, 3)))
+model.add(Dropout(0.4))
+
+model.add(GlobalAveragePooling2D())
+model.add(Dense(256, activation='relu', kernel_regularizer=l2(0.001)))
+model.add(BatchNormalization())
+model.add(Dropout(0.5))
+
+# Output Layer
+model.add(Dense(len(classes), activation='softmax'))
+model.summary()
+
+# Compile the model
+model.compile(loss="categorical_crossentropy", optimizer='adam', metrics=['accuracy'])
+
+# Model checkpoint callback to save the best model
+checkpoint_filepath = '/tmp/ckpt/checkpoint.model.keras'
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    monitor='val_accuracy',
+    mode='max',
+    save_best_only=True)
+
+# Train the model
+hist = model.fit(X_train, y_train, epochs=10, batch_size=64, validation_data=(X_test, y_test), callbacks=[model_checkpoint_callback])
+
+# Save the trained model
+model.save("Trained_model.h5")
+
+# Plot training and validation loss
+fig = plt.figure()
+plt.plot(hist.history['loss'], color='teal', label='loss')
+plt.plot(hist.history['val_loss'], color='orange', label='val_loss')
+fig.suptitle('Loss', fontsize=20)
+plt.legend(loc="upper left")
+plt.show()
+
+# Plot training and validation accuracy
+fig = plt.figure()
+plt.plot(hist.history['accuracy'], color='teal', label='accuracy')
+plt.plot(hist.history['val_accuracy'], color='orange', label='val_accuracy')
+fig.suptitle('Accuracy', fontsize=20)
+plt.legend(loc="upper left")
